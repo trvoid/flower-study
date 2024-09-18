@@ -1,0 +1,22 @@
+@startuml
+
+title "Flower gRPC 클라이언트 연결 등록\n(2024.09.18)"
+
+entity grpc_server
+entity FlowerServiceServicer
+participant flower_service_servicer.py
+entity ClientManager
+
+autonumber
+
+[-> grpc_server: new client
+
+grpc_server -> FlowerServiceServicer: Join()
+FlowerServiceServicer -> flower_service_servicer.py: register_client_proxy(client_manager, client_proxy)
+flower_service_servicer.py -> ClientManager: register(client_proxy)
+loop All messages
+    FlowerServiceServicer -> FlowerServiceServicer: Get ins_wrapper from bridge and yield server_message
+    FlowerServiceServicer -> FlowerServiceServicer: Wait for client message and push it to bridge
+end
+
+@enduml

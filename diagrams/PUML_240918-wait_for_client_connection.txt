@@ -1,0 +1,50 @@
+@startuml
+
+title "Flower gRPC 클라이언트 연결 대기\n(2024.09.18)"
+
+participant app.py
+participant grpc_server.py
+participant server.py
+
+entity grpc_server
+entity Server
+entity FedAvg
+entity ClientManager
+
+autonumber
+
+[-> app.py: start_server()
+
+app.py -> grpc_server.py: start_grpc_server()
+
+app.py -> server.py: run_fl()
+
+server.py -> Server: fit()
+activate Server
+    Server -> Server: _get_initial_parameters()
+    Server -> FedAvg: evaluate()
+    loop rounds
+        Server -> Server: fit_round()
+        activate Server
+            Server -> FedAvg: configure_fit()
+            FedAvg -> ClientManager: sample(num_clients, min_num_clients)
+            ClientManager -> ClientManager: wait_for(min_num_clients)
+            note right: 대기 Condition에 대한 알림은 register(클라이언트 연결)에 의해 발생
+            FedAvg <-- ClientManager: List[ClientProxy]
+            Server <-- FedAvg: List[(client, fit_ins)]
+            Server -> server.py: fit_clients()
+            Server <-- server.py: results, failures
+            Server -> FedAvg: aggregate_fit()
+        deactivate Server
+        Server -> FedAvg: evaluate()
+        Server -> Server: evaluate_round()
+    end
+deactivate Server
+
+server.py -> Server: disconnect_all_clients()
+
+app.py -> grpc_server: stop()
+
+[<-- app.py: hist
+
+@enduml

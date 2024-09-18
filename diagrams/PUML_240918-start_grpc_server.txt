@@ -1,0 +1,55 @@
+@startuml
+
+title "Flower gRPC 서버 시작\n(2024.09.18)"
+
+participant app.py
+participant server.py
+participant grpc_server.py
+participant transport_pb2_grpc.py
+participant grpc
+
+entity grpc_server
+entity Server
+note right of Server: Flower server
+
+autonumber
+
+[-> app.py: start_server()
+
+== Initialize server and server config ==
+
+app.py -> server.py: init_defaults()
+app.py <-- server.py: server, config
+
+== Start gRPC server ==
+
+app.py -> grpc_server.py: start_grpc_server(server.client_manager(), ...)
+
+grpc_server.py -> grpc_server.py: generic_create_grpc_server()
+activate grpc_server.py
+    grpc_server.py -> grpc: server()
+    grpc_server.py <-- grpc: grpc_server
+    grpc_server.py -> transport_pb2_grpc.py: add_FlowerServiceServicer_to_server(servicer, grpc_server)
+    transport_pb2_grpc.py -> grpc_server: add_generic_rpc_handlers((generic_handler,))
+    note right: servicer.Join()을 RPC 메쏘드 "Join"의 핸들러로 지정
+deactivate grpc_server.py
+
+grpc_server.py -> grpc_server: start()
+
+app.py <-- grpc_server.py: grpc_server
+
+== Start training ==
+
+app.py -> server.py: run_fl(server, config)
+server.py -> Server: fit(num_rounds)
+server.py -> Server: disconnect_all_clients()
+
+== Stop the gRPC server ==
+
+app.py -> grpc_server: stop()
+
+== Done ==
+
+[<-- app.py: hist 
+
+@enduml
