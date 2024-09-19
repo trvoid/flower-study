@@ -1,0 +1,109 @@
+@startuml
+
+title "Flower - start_server\n(2024-09-10)"
+
+autonumber
+
+box "server" #Ivory
+    participant fl_server.py
+    participant app.py
+    participant grpc_server.py
+    entity grpc_server
+    participant server.py
+    entity server
+    entity strategy
+    entity executor
+    entity client_proxy
+endbox
+
+box "client" #LightBlue
+    participant fl_client.py
+endbox
+
+fl_server.py -> app.py: start_server()
+activate app.py
+
+== Initialize defaults ==
+
+app.py -> server.py: init_defaults()
+app.py <-- server.py: server, config
+
+== Start gRPC server ==
+
+app.py -> grpc_server.py: start_grpc_server()
+app.py <-- grpc_server.py: grpc_server
+
+== Start federated learning ==
+
+app.py -> server.py: run_fl(server, config)
+activate server.py
+
+server.py -> server: fit()
+activate server
+
+== Initialize parameters ==
+
+server -> server: _get_initial_parameters()
+activate server
+    server -[#red]> strategy: initialize_parameters(client_manager)
+    server <-[#red]- strategy: parameters
+    alt parameters is None
+        server -> client_proxy: get_parameters()
+        server <-- client_proxy: parameters
+    end
+deactivate server
+
+== Evaluate initial parameters ==
+
+server -[#red]> strategy: evaluate(parameters)
+
+== Fit & Evaluate ==
+
+loop num_rounds
+    server -> server: fit_round()
+    note right: Train model and replace previous global model
+    activate server
+        server -[#red]> strategy: configure_fit()
+        server <-[#red]- strategy: client_instructions
+        server -> server: fit_clients()
+        activate server
+            group ThreadPool
+                server -> executor: submit()
+                server -> executor: wait()
+            end
+        deactivate server
+        server -[#red]> strategy: aggregate_fit()
+        server <-[#red]- strategy: aggregated_result
+    deactivate server
+    
+    server -[#red]> strategy: evaluate(parameters)
+    note right: Evaluate model using strategy implementation
+    server <-[#red]- strategy: loss_cen, metrics_cen
+    
+    server -> server: evaluate_round()
+    note right: Evaluate model on a sample of available clients
+    activate server
+        server -[#red]> strategy: configure_evalute()
+        server <-[#red]- strategy: client_instructions
+        server -> server: evaluate_clients()
+        server -[#red]> strategy: aggregate_evalute()
+        server <-[#red]- strategy: aggregated_result
+    deactivate server
+end
+
+server.py <-- server: hist
+deactivate server
+
+== Disconnect & Stop ==
+
+server.py -> server: disconnect_all_clients()
+app.py <-- server.py: hist
+deactivate server.py
+
+app.py -> grpc_server: stop()
+
+fl_server.py <-- app.py: hist
+
+deactivate app.py
+
+@enduml
