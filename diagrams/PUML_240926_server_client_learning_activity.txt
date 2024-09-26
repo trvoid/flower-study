@@ -1,0 +1,33 @@
+@startuml
+
+title "Flower - 학습 액티비티 다이어그램\n(2024-09-26)"
+
+start
+
+:모델 초기화;
+
+partition "전역 평가" {
+    :서버가 평가;
+}
+
+while (current_round <= num_of_rounds ?) is (yes)
+    partition "지역 학습" {
+        #LightBlue:학습을 위한 설정;
+        #LightBlue:클라이언트들이 학습;
+        #LightBlue:클라이언트들의 학습 결과 취합;
+    }
+    
+    partition "전역 평가" {
+        #LightGrey:서버가 평가;
+    }
+    
+    partition "지역 평가" {
+        #LightGreen:평가를 위한 설정;
+        #LightGreen:클라이언트들이 평가;
+        #LightGreen:클라이언트들의 평가 결과 취합;
+    }
+endwhile (no)
+
+stop
+
+@enduml
