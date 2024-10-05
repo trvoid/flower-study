@@ -83,10 +83,10 @@ loop num_rounds
     server -> server: evaluate_round()
     note right: Evaluate model on a sample of available clients
     activate server
-        server -[#red]> strategy: configure_evalute()
+        server -[#red]> strategy: configure_evaluate()
         server <-[#red]- strategy: client_instructions
         server -> server: evaluate_clients()
-        server -[#red]> strategy: aggregate_evalute()
+        server -[#red]> strategy: aggregate_evaluate()
         server <-[#red]- strategy: aggregated_result
     deactivate server
 end

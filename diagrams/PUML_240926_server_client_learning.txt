@@ -67,7 +67,7 @@ loop num_rounds
     server -> server: evaluate_round()
     note right: 글로벌 모델을 클라이언트들에게 보내서 평가하고 결과 취합
     activate server
-        server -[#red]> strategy: configure_evalute()
+        server -[#red]> strategy: configure_evaluate()
         server <-- strategy: client_instructions
         note left: 평가를 위한 설정 제공
         
@@ -79,7 +79,7 @@ loop num_rounds
                 server <-- client: EvaluateRes
             end
         deactivate server
-        server -[#red]> strategy: aggregate_evalute()
+        server -[#red]> strategy: aggregate_evaluate()
         note left: 클라이언트들로부터 받은 평가 결과 취합
         server <-- strategy: aggregated_result
     deactivate server

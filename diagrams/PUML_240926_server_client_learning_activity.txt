@@ -7,7 +7,7 @@ start
 :모델 초기화;
 
 partition "전역 평가" {
-    :서버가 평가;
+    #LightPink:서버가 평가;
 }
 
 while (current_round <= num_of_rounds ?) is (yes)
@@ -18,7 +18,7 @@ while (current_round <= num_of_rounds ?) is (yes)
     }
     
     partition "전역 평가" {
-        #LightGrey:서버가 평가;
+        #LightPink:서버가 평가;
     }
     
     partition "지역 평가" {
