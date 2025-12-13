@@ -12,96 +12,91 @@ import logging
 from tqdm import tqdm
 
 # Configure logging
-def setup_logging():
+def setup_logging(log_file="train.log"):
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
-            logging.FileHandler("train.log"),
+            logging.FileHandler(log_file),
             logging.StreamHandler()
         ]
     )
-    # Tqdm compatibility: redirect stdout/stderr? 
-    # Usually standard logging + tqdm works if carefully managed, or just keep it simple.
-    # We will use logging.info for messages.
-
-setup_logging()
 
 # ==========================================
 # 1. 실험 설정 (Configuration)
 # ==========================================
 class Config:
-    # 데이터 관련
-    NUM_CLIENTS = 10
-    PUBLIC_RATIO = 0.2          # 전체 데이터 중 공개 데이터 비율 (20%)
-    DIRICHLET_ALPHA = 0.5       # Non-IID 정도 (작을수록 불균형 심함)
-    
-    # 모델 관련
-    MODEL_NAME = 'mobilenetv3_small_100'
-    NUM_CLASSES = 10
-    IMG_SIZE = 128              # MobileNet은 32x32에서 성능이 떨어지므로 리사이징 권장
-    PRETRAINED = True           # Pretrained weights 사용
-    
     # 학습 관련
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     BATCH_SIZE = 32
-
-    # Phase 1: Public Pre-training 설정
-    PRETRAIN_EPOCHS = 5         # Public Pre-training 에폭
-    PRETRAIN_LR = 0.001
-    SKIP_PRETRAIN = False       # Public Pre-training 건너뛰기 여부
-    
-    # Phase 2: Federated Learning 설정
-    FL_ROUNDS = 10              # 통신 라운드
-    LOCAL_EPOCHS = 2            # 클라이언트 당 로컬 에폭
-    LOCAL_LR = 0.01
 
 def get_args():
     parser = argparse.ArgumentParser(description="Federated Learning Simulation (From Scratch)")
     
     # Data Args
-    parser.add_argument('--num_clients', type=int, default=10, help='Number of clients')
+    #  - num_clients: 클라이언트 수
+    #  - public_ratio: 전체 데이터 중 공개 데이터 비율 (20%)
+    #  - alpha: Non-IID 정도 (작을수록 불균형 심함)
+    #  - img_size: MobileNet은 32x32에서 성능이 떨어지므로 리사이징 권장
+    parser.add_argument('--num_clients', type=int, default=2, help='Number of clients')
     parser.add_argument('--public_ratio', type=float, default=0.2, help='Public data ratio')
     parser.add_argument('--alpha', type=float, default=0.5, help='Dirichlet alpha')
     parser.add_argument('--img_size', type=int, default=128, help='Image size')
     
     # Model Args
-    parser.add_argument('--model_name', type=str, default='mobilenetv3_small_100', help='Model name')
+    #  - model: 모델 이름
+    #  - pretrained: Pretrained weights 사용 여부
+    parser.add_argument('--model', type=str, default='mobilenet', help='Model name')
     parser.add_argument('--pretrained', action='store_true', help='Use pretrained weights')
     
     # Training Args
+    #  - device: Device (cuda/cpu)
+    #  - batch_size: Batch size
+    parser.add_argument('--device', type=str, default='', help='Device (cuda/cpu)')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
-    parser.add_argument('--pretrain_epochs', type=int, default=5, help='Public pre-training epochs')
+    # Phase 1: Public Pre-training
+    #  - skip_pretrain: Public Pre-training 건너뛰기 여부
+    #  - pretrain_epochs: Public Pre-training 에폭
+    #  - pretrain_lr: Public Pre-training 학습률
     parser.add_argument('--skip_pretrain', action='store_true', help='Skip public pre-training')
+    parser.add_argument('--pretrain_epochs', type=int, default=5, help='Public pre-training epochs')
+    parser.add_argument('--pretrain_lr', type=float, default=0.001, help='Pre-training learning rate')
+    # Phase 2: Federated Learning
+    #  - fl_rounds: 통신 라운드
+    #  - local_epochs: 클라이언트 당 로컬 에폭
+    #  - local_lr: 클라이언트 당 로컬 학습률
     parser.add_argument('--fl_rounds', type=int, default=10, help='FL rounds')
     parser.add_argument('--local_epochs', type=int, default=2, help='Local epochs')
-    parser.add_argument('--pretrain_lr', type=float, default=0.001, help='Pre-training learning rate')
     parser.add_argument('--local_lr', type=float, default=0.01, help='Local learning rate')
-    parser.add_argument('--device', type=str, default='', help='Device (cuda/cpu)')
     
+    # Output Control
+    parser.add_argument('--save_model_path', type=str, default='mobilenet_fl_server.pth', help='Path to save the global model')
+    parser.add_argument('--save_plot_path', type=str, default='fl_performance.png', help='Path to save the performance plot')
+    parser.add_argument('--log_path', type=str, default='train.log', help='Path to save logs')
+
     return parser.parse_args()
 
 # ==========================================
 # 2. 데이터 유틸리티 (Data Utils)
 # ==========================================
-def get_transforms():
+def get_transforms(img_size):
     # CIFAR-10 통계량
     stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     train_tf = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE), # MobileNet 최적화를 위한 리사이징
+        transforms.Resize(img_size),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(*stats)
     ])
     test_tf = transforms.Compose([
-        transforms.Resize(Config.IMG_SIZE),
+        transforms.Resize(img_size),
         transforms.ToTensor(),
         transforms.Normalize(*stats)
     ])
     return train_tf, test_tf
 
-def partition_data_dirichlet(targets, num_clients, alpha):
+def partition_data_dirichlet(targets, num_clients, alpha, num_classes):
     """Dirichlet 분포를 사용한 Non-IID 인덱스 분할"""
     min_size = 0
     N = len(targets)
@@ -109,7 +104,7 @@ def partition_data_dirichlet(targets, num_clients, alpha):
 
     while min_size < 10:
         idx_batch = [[] for _ in range(num_clients)]
-        for k in range(Config.NUM_CLASSES):
+        for k in range(num_classes):
             idx_k = np.where(targets == k)[0]
             np.random.shuffle(idx_k)
             proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
@@ -128,9 +123,9 @@ def partition_data_dirichlet(targets, num_clients, alpha):
             
     return net_dataidx_map
 
-def prepare_datasets():
+def prepare_datasets(img_size, public_ratio, num_clients, alpha, num_classes):
     logging.info(">>> Loading & Partitioning Data...")
-    train_tf, test_tf = get_transforms()
+    train_tf, test_tf = get_transforms(img_size)
     
     # 전체 데이터셋 로드
     full_train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=train_tf)
@@ -138,7 +133,7 @@ def prepare_datasets():
     
     # 1. Public (20%) vs Private (80%) 분할
     total_len = len(full_train_dataset)
-    public_len = int(total_len * Config.PUBLIC_RATIO)
+    public_len = int(total_len * public_ratio)
     private_len = total_len - public_len
     
     # 간단하게 인덱스로 분할 (앞부분 Public, 뒷부분 Private)
@@ -154,27 +149,41 @@ def prepare_datasets():
     private_targets = all_targets[private_indices]
     
     # Non-IID 인덱스 생성 (Private 데이터 내부에서의 상대 인덱스)
-    client_idx_map_relative = partition_data_dirichlet(private_targets, Config.NUM_CLIENTS, Config.DIRICHLET_ALPHA)
+    client_idx_map_relative = partition_data_dirichlet(private_targets, num_clients, alpha, num_classes)
     
     # 상대 인덱스를 전체 데이터셋 기준 절대 인덱스로 변환
     client_datasets = []
-    for i in range(Config.NUM_CLIENTS):
+    for i in range(num_clients):
         relative_idxs = client_idx_map_relative[i]
         absolute_idxs = [private_indices[idx] for idx in relative_idxs]
         client_datasets.append(Subset(full_train_dataset, absolute_idxs))
     
-    logging.info(f"Data Prepared: Public({len(public_dataset)}), Private({len(private_indices)} split to {Config.NUM_CLIENTS} clients)")
+    logging.info(f"Data Prepared: Public({len(public_dataset)}), Private({len(private_indices)} split to {num_clients} clients)")
     return public_dataset, client_datasets, test_dataset
 
 # ==========================================
 # 3. 모델 유틸리티 (timm Model)
 # ==========================================
-def get_model():
+def get_model(model_name, pretrained=False, num_classes=10):
     """timm을 사용하여 MobileNet V3 Small 로드"""
+
+    # Map user-friendly names to timm model names
+    model_mapping = {
+        'efficientnet': 'efficientnet_b0',
+        'mobilenet': 'mobilenetv3_small_100',
+        'wideresnet': 'wide_resnet28_10',
+        'vit': 'vit_base_patch16_224',
+    }
+    
+    if model_name not in model_mapping:
+        raise ValueError(f"Unknown model: {model_name}. Available: {list(model_mapping.keys())}")
+        
+    timm_name = model_mapping[model_name]
+
     model = timm.create_model(
-        Config.MODEL_NAME, 
-        pretrained=Config.PRETRAINED,
-        num_classes=Config.NUM_CLASSES
+        timm_name, 
+        pretrained=pretrained,
+        num_classes=num_classes
     )
 
     return model.to(Config.DEVICE)
@@ -226,10 +235,10 @@ def train_centralized(model, dataset, epochs, lr, description="Training"):
         # print(f"Epoch {epoch+1}/{epochs} Loss: {running_loss/len(loader):.4f}") # tqdm이 대체함
     return model
 
-def train_client_local(global_weights, dataset, epochs, lr):
+def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr):
     """클라이언트 로컬 학습 (Federated Learning 용)"""
     # 글로벌 가중치 복사 및 로드
-    model = get_model()
+    model = get_model(model_name, pretrained)
     model.load_state_dict(global_weights)
     model.train()
     
@@ -255,50 +264,46 @@ if __name__ == "__main__":
     args = get_args()
     
     # Update Config
-    Config.NUM_CLIENTS = args.num_clients
-    Config.PUBLIC_RATIO = args.public_ratio
-    Config.DIRICHLET_ALPHA = args.alpha
-    Config.IMG_SIZE = args.img_size
-    Config.MODEL_NAME = args.model_name
-    Config.PRETRAINED = args.pretrained
     Config.BATCH_SIZE = args.batch_size
-
-    Config.PRETRAIN_EPOCHS = args.pretrain_epochs
-    Config.FL_ROUNDS = args.fl_rounds
-    Config.LOCAL_EPOCHS = args.local_epochs
-    Config.PRETRAIN_LR = args.pretrain_lr
-    Config.LOCAL_LR = args.local_lr
-    Config.SKIP_PRETRAIN = args.skip_pretrain
     
     if args.device:
         Config.DEVICE = torch.device(args.device)
+    
+    setup_logging(args.log_path)
         
     logging.info(f"Updated Config: {Config.__dict__}")
 
     # 1. 데이터 준비
-    public_data, client_datasets, test_data = prepare_datasets()
+    public_data, client_datasets, test_data = prepare_datasets(
+        args.img_size,
+        args.public_ratio,
+        args.num_clients,
+        args.alpha,
+        num_classes=10
+    )
     test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
     
     # 2. 모델 초기화
-    global_model = get_model()
+    global_model = get_model(args.model, args.pretrained, num_classes=10)
     
     # ====================================================
     # PHASE 1: Public Data Pre-training
     # ====================================================
-    if not Config.SKIP_PRETRAIN:
+    initial_weights = "ImageNet Weights" if args.pretrained else "Random Weights"
+    if not args.skip_pretrain:
         logging.info("\n>>> [Phase 1] Pre-training on Public Dataset (20%)...")
         # 사전 학습 전 성능 측정
         acc_before, _ = evaluate(global_model, test_loader)
-        logging.info(f"Initial Acc (ImageNet Weights only): {acc_before:.2f}%")
+        logging.info(f"Initial Acc ({initial_weights}): {acc_before:.2f}%")
         
         # 공개 데이터로 학습
-        global_model = train_centralized(global_model, public_data, Config.PRETRAIN_EPOCHS, Config.PRETRAIN_LR, "Public Pre-training")
+        global_model = train_centralized(global_model, public_data, args.pretrain_epochs, args.pretrain_lr, "Public Pre-training")
         
         acc_pre, _ = evaluate(global_model, test_loader)
         logging.info(f"Acc after Public Pre-training: {acc_pre:.2f}%")
         logging.info(">>> Phase 1 Complete. This model is now the 'Server Model'.\n")
     else:
-        logging.info("\n>>> [Phase 1] Skipped. Using initial weights (ImageNet or Random) as Server Model.\n")
+        logging.info(f"\n>>> [Phase 1] Skipped. Using initial weights ({initial_weights}) as Server Model.\n")
         # 평가 루틴을 위해 acc_pre를 측정
         acc_pre, _ = evaluate(global_model, test_loader)
         logging.info(f"Initial Acc: {acc_pre:.2f}%")
@@ -306,29 +311,30 @@ if __name__ == "__main__":
     # ====================================================
     # PHASE 2: Federated Learning on Private Non-IID Data
     # ====================================================
-    # ====================================================
     logging.info(">>> [Phase 2] Starting Federated Learning on Private Datasets...")
     global_weights = global_model.state_dict()
     fl_accuracies = [acc_pre]
     
     # tqdm으로 Round 진행 상황 표시
-    round_iterator = tqdm(range(Config.FL_ROUNDS), desc="FL Rounds")
+    round_iterator = tqdm(range(args.fl_rounds), desc="FL Rounds")
     for round_idx in round_iterator:
         local_weights_list = []
         local_sample_counts = []
         
         # 모든 클라이언트 참여 (Simulation Full Participation)
-        for client_id in range(Config.NUM_CLIENTS):
+        for client_id in range(args.num_clients):
             w, count = train_client_local(
+                args.model,
+                args.pretrained,
                 copy.deepcopy(global_weights), 
                 client_datasets[client_id], 
-                Config.LOCAL_EPOCHS, 
-                Config.LOCAL_LR
+                args.local_epochs, 
+                args.local_lr
             )
             local_weights_list.append(w)
             local_sample_counts.append(count)
             # 진행 상황 출력 (Optional)
-            # print(f"Round {round_idx+1} | Client {client_id} finished.")
+            print(f"Round {round_idx+1} | Client {client_id} finished.")
             
         # FedAvg Aggregation
         total_samples = sum(local_sample_counts)
@@ -336,7 +342,7 @@ if __name__ == "__main__":
         
         for key in new_weights.keys():
             weighted_sum = 0
-            for i in range(Config.NUM_CLIENTS):
+            for i in range(args.num_clients):
                 weight_ratio = local_sample_counts[i] / total_samples
                 weighted_sum += local_weights_list[i][key] * weight_ratio
             new_weights[key] = weighted_sum
@@ -350,26 +356,25 @@ if __name__ == "__main__":
         
         # tqdm postfix에 결과 업데이트
         round_iterator.set_postfix({'Acc': f"{round_acc:.2f}%", 'Loss': f"{round_loss:.4f}"})
-        # print(f"Round {round_idx+1}/{Config.FL_ROUNDS} | Global Acc: {round_acc:.2f}% | Loss: {round_loss:.4f}")
+        # print(f"Round {round_idx+1}/{args.fl_rounds} | Global Acc: {round_acc:.2f}% | Loss: {round_loss:.4f}")
 
     # ====================================================
     # 결과 시각화
     # ====================================================
     plt.figure(figsize=(10, 6))
     plt.plot(range(len(fl_accuracies)), fl_accuracies, marker='o', label='FL with Public Pre-training')
-    plt.title(f'FL Performance (MobileNetV3, Alpha={Config.DIRICHLET_ALPHA})')
+    plt.title(f'FL Performance (MobileNetV3, Alpha={args.alpha})')
     plt.xlabel('FL Rounds (0 = After Public Pretrain)')
     plt.ylabel('Test Accuracy (%)')
     plt.grid(True)
     plt.legend()
-    plt.savefig('fl_performance.png')
+    plt.savefig(args.save_plot_path)
     # plt.show()
     
     # ====================================================
     # 모델 저장
     # ====================================================
-    save_path = "mobilenet_fl_server.pth"
-    torch.save(global_model.state_dict(), save_path)
-    logging.info(f"Global model saved to {save_path}")
+    torch.save(global_model.state_dict(), args.save_model_path)
+    logging.info(f"Global model saved to {args.save_model_path}")
 
     logging.info("\nExperiment Finished Successfully!")
