@@ -18,7 +18,7 @@ def setup_logging():
         format='%(asctime)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
-            logging.FileHandler("train_log.txt"),
+            logging.FileHandler("train.log"),
             logging.StreamHandler()
         ]
     )
@@ -162,9 +162,7 @@ def prepare_datasets():
         relative_idxs = client_idx_map_relative[i]
         absolute_idxs = [private_indices[idx] for idx in relative_idxs]
         client_datasets.append(Subset(full_train_dataset, absolute_idxs))
-        
-        client_datasets.append(Subset(full_train_dataset, absolute_idxs))
-        
+    
     logging.info(f"Data Prepared: Public({len(public_dataset)}), Private({len(private_indices)} split to {Config.NUM_CLIENTS} clients)")
     return public_dataset, client_datasets, test_dataset
 
@@ -364,6 +362,14 @@ if __name__ == "__main__":
     plt.ylabel('Test Accuracy (%)')
     plt.grid(True)
     plt.legend()
-    plt.show()
+    plt.savefig('fl_performance.png')
+    # plt.show()
     
+    # ====================================================
+    # 모델 저장
+    # ====================================================
+    save_path = "mobilenet_fl_server.pth"
+    torch.save(global_model.state_dict(), save_path)
+    logging.info(f"Global model saved to {save_path}")
+
     logging.info("\nExperiment Finished Successfully!")
