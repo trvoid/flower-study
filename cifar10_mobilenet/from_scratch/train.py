@@ -74,6 +74,7 @@ def get_args():
     parser.add_argument('--save_model_path', type=str, default='mobilenet_fl_server.pth', help='Path to save the global model')
     parser.add_argument('--save_plot_path', type=str, default='fl_performance.png', help='Path to save the performance plot')
     parser.add_argument('--log_path', type=str, default='train.log', help='Path to save logs')
+    parser.add_argument('--save_dist_path', type=str, default='client_distribution.png', help='Path to save the client data distribution plot')
 
     return parser.parse_args()
 
@@ -160,6 +161,47 @@ def prepare_datasets(img_size, public_ratio, num_clients, alpha, num_classes):
     
     logging.info(f"Data Prepared: Public({len(public_dataset)}), Private({len(private_indices)} split to {num_clients} clients)")
     return public_dataset, client_datasets, test_dataset
+
+def visualize_client_data_distribution(client_datasets, num_classes, save_path):
+    """클라이언트별 데이터 분포 시각화 및 저장"""
+    logging.info(">>> Visualizing Client Data Distribution...")
+    client_counts = np.zeros((len(client_datasets), num_classes))
+    
+    for i, dataset in enumerate(client_datasets):
+        # Subset의 경우 dataset.dataset.targets를 참조하고, dataset.indices를 사용해야 함
+        # 하지만 여기서는 dataset이 Subset 객체이므로 순회하며 target을 얻거나, 원본 접근
+        # 효율성을 위해 원본 targets에 접근
+        if isinstance(dataset, Subset):
+            # dataset.dataset is the Full dataset
+            # dataset.indices are the indices for this client
+            targets = np.array(dataset.dataset.targets)
+            client_targets = targets[dataset.indices]
+            
+            for t in client_targets:
+                client_counts[i][t] += 1
+        else:
+            # 일반 Dataset인 경우 (잘 없을 수 있음)
+            for _, label in dataset:
+                client_counts[i][label] += 1
+
+    # Plotting
+    fig, ax = plt.subplots(figsize=(12, 6))
+    x = np.arange(len(client_datasets))
+    bottom = np.zeros(len(client_datasets))
+    
+    for k in range(num_classes):
+        ax.bar(x, client_counts[:, k], bottom=bottom, label=f'Class {k}')
+        bottom += client_counts[:, k]
+        
+    ax.set_ylabel('Number of Samples')
+    ax.set_xlabel('Client ID')
+    ax.set_title('Label Distribution per Client')
+    ax.set_xticks(x)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.1, 1.05))
+    plt.tight_layout()
+    plt.savefig(save_path)
+    logging.info(f"Distribution plot saved to {save_path}")
+
 
 # ==========================================
 # 3. 모델 유틸리티 (timm Model)
@@ -281,6 +323,10 @@ if __name__ == "__main__":
         args.alpha,
         num_classes=10
     )
+    
+    # 데이터 분포 시각화
+    visualize_client_data_distribution(client_datasets, num_classes=10, save_path=args.save_dist_path)
+
     test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
     
     # 2. 모델 초기화
