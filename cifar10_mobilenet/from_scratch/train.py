@@ -176,6 +176,20 @@ def run_phase_1(args, global_model, public_data, test_loader):
         
     return acc_pre, global_model
 
+def aggregate_fedavg(global_weights, local_weights_list, local_sample_counts):
+    """FedAvg Aggregation"""
+    total_samples = sum(local_sample_counts)
+    new_weights = copy.deepcopy(global_weights)
+    
+    for key in new_weights.keys():
+        weighted_sum = 0
+        for i in range(len(local_weights_list)):
+            weight_ratio = local_sample_counts[i] / total_samples
+            weighted_sum += local_weights_list[i][key] * weight_ratio
+        new_weights[key] = weighted_sum
+        
+    return new_weights
+
 def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre):
     """Phase 2: Federated Learning on Private Non-IID Data"""
     logging.info(">>> [Phase 2] Starting Federated Learning on Private Datasets...")
@@ -204,17 +218,7 @@ def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre):
             print(f"Round {round_idx+1} | Client {client_id} finished.")
             
         # FedAvg Aggregation
-        total_samples = sum(local_sample_counts)
-        new_weights = copy.deepcopy(global_weights)
-        
-        for key in new_weights.keys():
-            weighted_sum = 0
-            for i in range(args.num_clients):
-                weight_ratio = local_sample_counts[i] / total_samples
-                weighted_sum += local_weights_list[i][key] * weight_ratio
-            new_weights[key] = weighted_sum
-            
-        global_weights = new_weights
+        global_weights = aggregate_fedavg(global_weights, local_weights_list, local_sample_counts)
         
         # Round Evaluation
         global_model.load_state_dict(global_weights)
