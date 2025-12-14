@@ -1,5 +1,6 @@
 import torch
 import argparse
+import os
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset, random_split
@@ -71,10 +72,7 @@ def get_args():
     parser.add_argument('--local_lr', type=float, default=0.01, help='Local learning rate')
     
     # Output Control
-    parser.add_argument('--save_model_path', type=str, default='mobilenet_fl_server.pth', help='Path to save the global model')
-    parser.add_argument('--save_plot_path', type=str, default='fl_performance.png', help='Path to save the performance plot')
-    parser.add_argument('--log_path', type=str, default='train.log', help='Path to save logs')
-    parser.add_argument('--save_dist_path', type=str, default='client_distribution.png', help='Path to save the client data distribution plot')
+    parser.add_argument('--result_dir', type=str, default='./results', help='Directory to save all results (logs, plots, models)')
 
     return parser.parse_args()
 
@@ -311,7 +309,12 @@ if __name__ == "__main__":
     if args.device:
         Config.DEVICE = torch.device(args.device)
     
-    setup_logging(args.log_path)
+    # Create result directory
+    if not os.path.exists(args.result_dir):
+        os.makedirs(args.result_dir)
+        
+    log_path = os.path.join(args.result_dir, 'train.log')
+    setup_logging(log_path)
         
     logging.info(f"Updated Config: {Config.__dict__}")
 
@@ -325,7 +328,7 @@ if __name__ == "__main__":
     )
     
     # 데이터 분포 시각화
-    visualize_client_data_distribution(client_datasets, num_classes=10, save_path=args.save_dist_path)
+    visualize_client_data_distribution(client_datasets, num_classes=10, save_path=os.path.join(args.result_dir, 'client_distribution.png'))
 
     test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
     
@@ -414,13 +417,15 @@ if __name__ == "__main__":
     plt.ylabel('Test Accuracy (%)')
     plt.grid(True)
     plt.legend()
-    plt.savefig(args.save_plot_path)
+    plt.legend()
+    plt.savefig(os.path.join(args.result_dir, 'fl_performance.png'))
     # plt.show()
     
     # ====================================================
     # 모델 저장
     # ====================================================
-    torch.save(global_model.state_dict(), args.save_model_path)
-    logging.info(f"Global model saved to {args.save_model_path}")
+    save_model_path = os.path.join(args.result_dir, 'mobilenet_fl_server.pth')
+    torch.save(global_model.state_dict(), save_model_path)
+    logging.info(f"Global model saved to {save_model_path}")
 
     logging.info("\nExperiment Finished Successfully!")
