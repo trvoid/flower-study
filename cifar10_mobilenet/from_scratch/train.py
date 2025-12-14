@@ -38,11 +38,11 @@ def get_args():
     #  - num_clients: 클라이언트 수
     #  - public_ratio: 전체 데이터 중 공개 데이터 비율 (20%)
     #  - alpha: Non-IID 정도 (작을수록 불균형 심함)
-    #  - img_size: MobileNet은 32x32에서 성능이 떨어지므로 리사이징 권장
+    #  - mode: NATIVE(32x32) or RESIZE(224x224)
     parser.add_argument('--num_clients', type=int, default=2, help='Number of clients')
     parser.add_argument('--public_ratio', type=float, default=0.2, help='Public data ratio')
     parser.add_argument('--alpha', type=float, default=0.5, help='Dirichlet alpha')
-    parser.add_argument('--img_size', type=int, default=128, help='Image size')
+    parser.add_argument('--mode', type=str, default='NATIVE', choices=['NATIVE', 'RESIZE'], help='Image size mode: NATIVE(32x32) or RESIZE(224x224)')
     
     # Model Args
     #  - model: 모델 이름
@@ -259,9 +259,21 @@ if __name__ == "__main__":
         
     logging.info(f"Updated Config: {Config.__dict__}")
 
+    # Determine mode: if model is ViT, force RESIZE, otherwise use args.mode
+    if args.model == 'vit':
+        mode = 'RESIZE'
+        logging.info("Model is ViT, forcing RESIZE mode")
+    else:
+        mode = args.mode
+        logging.info(f"Using mode: {mode}")
+    
+    # Determine image size based on mode
+    img_size = 32 if mode == 'NATIVE' else 224
+    logging.info(f"Mode: {mode} -> Image Size: {img_size}")
+
     # 데이터 준비
     public_data, client_datasets, test_data = prepare_datasets(
-        args.img_size,
+        img_size,
         args.public_ratio,
         args.num_clients,
         args.alpha,
@@ -275,7 +287,7 @@ if __name__ == "__main__":
     test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
     
     # 모델 초기화
-    global_model = get_model(args.model, args.pretrained, num_classes=10, device=Config.DEVICE)
+    global_model = get_model(args.model, args.pretrained, num_classes=10, img_size=img_size, device=Config.DEVICE)
     
     # PHASE 1: Public Data Pre-training
     acc_pre, global_model = run_phase_1(args, global_model, public_data, test_loader)

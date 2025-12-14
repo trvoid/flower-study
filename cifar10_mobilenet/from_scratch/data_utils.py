@@ -6,20 +6,40 @@ from torchvision import datasets, transforms
 from torch.utils.data import Subset
 
 def get_transforms(img_size):
-    # CIFAR-10 통계량
+    # CIFAR-10 통계량 (Mean/Std)
     stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-    train_tf = transforms.Compose([
-        transforms.Resize(img_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(*stats)
-    ])
-    test_tf = transforms.Compose([
-        transforms.Resize(img_size),
-        transforms.ToTensor(),
-        transforms.Normalize(*stats)
-    ])
-    return train_tf, test_tf
+    
+    if img_size == 224:
+        # ImageNet 규격에 맞춤 (224x224)
+        logging.info(f"Resizing images to {img_size}x{img_size}")
+        transform_train = transforms.Compose([
+            transforms.Resize(img_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(*stats)
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize(img_size),
+            transforms.ToTensor(),
+            transforms.Normalize(*stats)
+        ])
+    else: # NATIVE
+        # 32x32 원본 사용
+        logging.info(f"Using original images of size {img_size}x{img_size}")
+        transform_train = transforms.Compose([
+            transforms.Resize(img_size),
+            transforms.RandomCrop(img_size, padding=4), 
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(*stats),
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize(img_size),
+            transforms.RandomCrop(img_size, padding=4), 
+            transforms.ToTensor(),
+            transforms.Normalize(*stats),
+        ])
+    return transform_train, transform_test
 
 def partition_data_dirichlet(targets, num_clients, alpha, num_classes):
     """Dirichlet 분포를 사용한 Non-IID 인덱스 분할"""
