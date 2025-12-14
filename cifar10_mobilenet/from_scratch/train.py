@@ -69,6 +69,7 @@ def get_args():
     parser.add_argument('--fl_rounds', type=int, default=10, help='FL rounds')
     parser.add_argument('--local_epochs', type=int, default=2, help='Local epochs')
     parser.add_argument('--local_lr', type=float, default=0.01, help='Local learning rate')
+    parser.add_argument('--mu', type=float, default=0.0, help='FedProx mu (proximal term coefficient)')
     
     # Output Control
     parser.add_argument('--result_dir', type=str, default='./results', help='Directory to save all results (logs, plots, models)')
@@ -100,13 +101,20 @@ def train_centralized(model, dataset, epochs, lr, description="Training"):
             pbar.set_postfix({'loss': running_loss/(i+1)})
         # print(f"Epoch {epoch+1}/{epochs} Loss: {running_loss/len(loader):.4f}") # tqdm이 대체함
     return model
-
-def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr):
+ 
+def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr, mu=0.0, img_size=32):
     """클라이언트 로컬 학습 (Federated Learning 용)"""
     # 글로벌 가중치 복사 및 로드
-    model = get_model(model_name, pretrained, num_classes=10, device=Config.DEVICE)
+    model = get_model(model_name, pretrained, num_classes=10, img_size=img_size, device=Config.DEVICE)
     model.load_state_dict(global_weights)
     model.train()
+    
+    # FedProx: Store global weights for proximal term calculation
+    global_params = {}
+    if mu > 0:
+        for name, param in model.named_parameters():
+             if param.requires_grad:
+                 global_params[name] = global_weights[name].to(Config.DEVICE).clone()
     
     loader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=True)
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9) # FL은 보통 SGD 사용
@@ -118,6 +126,15 @@ def train_client_local(model_name, pretrained, global_weights, dataset, epochs, 
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
+            
+            # FedProx Proximal Term
+            if mu > 0:
+                proximal_term = 0.0
+                for name, param in model.named_parameters():
+                    if param.requires_grad:
+                        proximal_term += torch.sum((param - global_params[name])**2)
+                loss += (mu / 2) * proximal_term
+
             loss.backward()
             optimizer.step()
             
@@ -190,7 +207,7 @@ def aggregate_fedavg(global_weights, local_weights_list, local_sample_counts):
         
     return new_weights
 
-def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre):
+def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre, img_size=32):
     """Phase 2: Federated Learning on Private Non-IID Data"""
     logging.info(">>> [Phase 2] Starting Federated Learning on Private Datasets...")
     global_weights = global_model.state_dict()
@@ -210,7 +227,9 @@ def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre):
                 copy.deepcopy(global_weights), 
                 client_datasets[client_id], 
                 args.local_epochs, 
-                args.local_lr
+                args.local_lr,
+                args.mu,
+                img_size
             )
             local_weights_list.append(w)
             local_sample_counts.append(count)
@@ -297,7 +316,7 @@ if __name__ == "__main__":
     acc_pre, global_model = run_phase_1(args, global_model, public_data, test_loader)
     
     # PHASE 2: Federated Learning on Private Non-IID Data
-    fl_accuracies, global_model = run_phase_2(args, global_model, client_datasets, test_loader, acc_pre)
+    fl_accuracies, global_model = run_phase_2(args, global_model, client_datasets, test_loader, acc_pre, img_size)
 
     # 결과 시각화
     visualize_fl_performance(fl_accuracies, args.alpha, os.path.join(args.result_dir, 'fl_performance.png'))
