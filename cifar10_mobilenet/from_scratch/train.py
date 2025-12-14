@@ -142,50 +142,14 @@ def evaluate(model, test_loader):
             
     acc = 100 * correct / total
     avg_loss = total_loss / len(test_loader)
+    acc = 100 * correct / total
+    avg_loss = total_loss / len(test_loader)
     return acc, avg_loss
 
-# ==========================================
-# 3. 메인 실험 실행 (Experiment Execution)
-# ==========================================
-if __name__ == "__main__":
-    args = get_args()
-    
-    # Update Config
-    Config.BATCH_SIZE = args.batch_size
-    
-    if args.device:
-        Config.DEVICE = torch.device(args.device)
-    
-    # Create result directory
-    if not os.path.exists(args.result_dir):
-        os.makedirs(args.result_dir)
-        
-    log_path = os.path.join(args.result_dir, 'train.log')
-    setup_logging(log_path)
-        
-    logging.info(f"Updated Config: {Config.__dict__}")
-
-    # 1. 데이터 준비
-    public_data, client_datasets, test_data = prepare_datasets(
-        args.img_size,
-        args.public_ratio,
-        args.num_clients,
-        args.alpha,
-        num_classes=10
-    )
-    
-    # 데이터 분포 시각화
-    visualize_client_data_distribution(client_datasets, num_classes=10, save_path=os.path.join(args.result_dir, 'client_distribution.png'))
-
-    test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
-    
-    # 2. 모델 초기화
-    global_model = get_model(args.model, args.pretrained, num_classes=10, device=Config.DEVICE)
-    
-    # ====================================================
-    # PHASE 1: Public Data Pre-training
-    # ====================================================
+def run_phase_1(args, global_model, public_data, test_loader):
+    """Phase 1: Public Data Pre-training"""
     initial_weights = "ImageNet Weights" if args.pretrained else "Random Weights"
+    
     if not args.skip_pretrain:
         logging.info("\n>>> [Phase 1] Pre-training on Public Dataset (20%)...")
         # 사전 학습 전 성능 측정
@@ -193,7 +157,13 @@ if __name__ == "__main__":
         logging.info(f"Initial Acc ({initial_weights}): {acc_before:.2f}%")
         
         # 공개 데이터로 학습
-        global_model = train_centralized(global_model, public_data, args.pretrain_epochs, args.pretrain_lr, "Public Pre-training")
+        global_model = train_centralized(
+            global_model, 
+            public_data, 
+            args.pretrain_epochs, 
+            args.pretrain_lr, 
+            "Public Pre-training"
+        )
         
         acc_pre, _ = evaluate(global_model, test_loader)
         logging.info(f"Acc after Public Pre-training: {acc_pre:.2f}%")
@@ -203,10 +173,11 @@ if __name__ == "__main__":
         # 평가 루틴을 위해 acc_pre를 측정
         acc_pre, _ = evaluate(global_model, test_loader)
         logging.info(f"Initial Acc: {acc_pre:.2f}%")
-    
-    # ====================================================
-    # PHASE 2: Federated Learning on Private Non-IID Data
-    # ====================================================
+        
+    return acc_pre, global_model
+
+def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre):
+    """Phase 2: Federated Learning on Private Non-IID Data"""
     logging.info(">>> [Phase 2] Starting Federated Learning on Private Datasets...")
     global_weights = global_model.state_dict()
     fl_accuracies = [acc_pre]
@@ -252,25 +223,70 @@ if __name__ == "__main__":
         
         # tqdm postfix에 결과 업데이트
         round_iterator.set_postfix({'Acc': f"{round_acc:.2f}%", 'Loss': f"{round_loss:.4f}"})
-        # print(f"Round {round_idx+1}/{args.fl_rounds} | Global Acc: {round_acc:.2f}% | Loss: {round_loss:.4f}")
+        
+    return fl_accuracies, global_model
 
-    # ====================================================
-    # 결과 시각화
-    # ====================================================
+def visualize_fl_performance(fl_accuracies, alpha, save_path):
+    """결과 시각화"""
     plt.figure(figsize=(10, 6))
     plt.plot(range(len(fl_accuracies)), fl_accuracies, marker='o', label='FL with Public Pre-training')
-    plt.title(f'FL Performance (MobileNetV3, Alpha={args.alpha})')
+    plt.title(f'FL Performance (MobileNetV3, Alpha={alpha})')
     plt.xlabel('FL Rounds (0 = After Public Pretrain)')
     plt.ylabel('Test Accuracy (%)')
     plt.grid(True)
     plt.legend()
-    plt.legend()
-    plt.savefig(os.path.join(args.result_dir, 'fl_performance.png'))
+    plt.savefig(save_path)
     # plt.show()
+
+# ==========================================
+# 3. 메인 실험 실행 (Experiment Execution)
+# ==========================================
+if __name__ == "__main__":
+    args = get_args()
     
-    # ====================================================
+    # Config Update
+    Config.BATCH_SIZE = args.batch_size
+    
+    if args.device:
+        Config.DEVICE = torch.device(args.device)
+    
+    # 결과 저장 폴더 생성
+    if not os.path.exists(args.result_dir):
+        os.makedirs(args.result_dir)
+        
+    log_path = os.path.join(args.result_dir, 'train.log')
+    setup_logging(log_path)
+        
+    logging.info(f"Updated Config: {Config.__dict__}")
+
+    # 데이터 준비
+    public_data, client_datasets, test_data = prepare_datasets(
+        args.img_size,
+        args.public_ratio,
+        args.num_clients,
+        args.alpha,
+        num_classes=10
+    )
+    
+    # 데이터 분포 시각화
+    visualize_client_data_distribution(client_datasets, num_classes=10, save_path=os.path.join(args.result_dir, 'client_distribution.png'))
+
+    # 테스트 데이터 로더 생성
+    test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
+    
+    # 모델 초기화
+    global_model = get_model(args.model, args.pretrained, num_classes=10, device=Config.DEVICE)
+    
+    # PHASE 1: Public Data Pre-training
+    acc_pre, global_model = run_phase_1(args, global_model, public_data, test_loader)
+    
+    # PHASE 2: Federated Learning on Private Non-IID Data
+    fl_accuracies, global_model = run_phase_2(args, global_model, client_datasets, test_loader, acc_pre)
+
+    # 결과 시각화
+    visualize_fl_performance(fl_accuracies, args.alpha, os.path.join(args.result_dir, 'fl_performance.png'))
+    
     # 모델 저장
-    # ====================================================
     save_model_path = os.path.join(args.result_dir, 'mobilenet_fl_server.pth')
     torch.save(global_model.state_dict(), save_model_path)
     logging.info(f"Global model saved to {save_model_path}")
