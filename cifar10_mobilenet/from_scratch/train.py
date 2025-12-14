@@ -11,6 +11,7 @@ import copy
 import matplotlib.pyplot as plt
 import logging
 from tqdm import tqdm
+from models import get_model
 
 # Configure logging
 def setup_logging(log_file="train.log"):
@@ -200,57 +201,8 @@ def visualize_client_data_distribution(client_datasets, num_classes, save_path):
     plt.savefig(save_path)
     logging.info(f"Distribution plot saved to {save_path}")
 
-
 # ==========================================
-# 3. 모델 유틸리티 (timm Model)
-# ==========================================
-def get_model(model_name, pretrained=False, num_classes=10):
-    """timm을 사용하여 MobileNet V3 Small 로드"""
-
-    # Map user-friendly names to timm model names
-    model_mapping = {
-        'efficientnet': 'efficientnet_b0',
-        'mobilenet': 'mobilenetv3_small_100',
-        'wideresnet': 'wide_resnet28_10',
-        'vit': 'vit_base_patch16_224',
-    }
-    
-    if model_name not in model_mapping:
-        raise ValueError(f"Unknown model: {model_name}. Available: {list(model_mapping.keys())}")
-        
-    timm_name = model_mapping[model_name]
-
-    model = timm.create_model(
-        timm_name, 
-        pretrained=pretrained,
-        num_classes=num_classes
-    )
-
-    return model.to(Config.DEVICE)
-
-def evaluate(model, test_loader):
-    model.eval()
-    correct = 0
-    total = 0
-    criterion = nn.CrossEntropyLoss()
-    total_loss = 0.0
-    
-    with torch.no_grad():
-        for images, labels in test_loader:
-            images, labels = images.to(Config.DEVICE), labels.to(Config.DEVICE)
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            total_loss += loss.item()
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-            
-    acc = 100 * correct / total
-    avg_loss = total_loss / len(test_loader)
-    return acc, avg_loss
-
-# ==========================================
-# 4. 학습 루틴 (Training Routines)
+# 3. 학습 루틴 (Training Routines)
 # ==========================================
 def train_centralized(model, dataset, epochs, lr, description="Training"):
     """중앙 집중식 학습 (Public Data Pre-training 용)"""
@@ -278,7 +230,7 @@ def train_centralized(model, dataset, epochs, lr, description="Training"):
 def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr):
     """클라이언트 로컬 학습 (Federated Learning 용)"""
     # 글로벌 가중치 복사 및 로드
-    model = get_model(model_name, pretrained)
+    model = get_model(model_name, pretrained, num_classes=10, device=Config.DEVICE)
     model.load_state_dict(global_weights)
     model.train()
     
@@ -297,8 +249,29 @@ def train_client_local(model_name, pretrained, global_weights, dataset, epochs, 
             
     return model.state_dict(), len(dataset)
 
+def evaluate(model, test_loader):
+    model.eval()
+    correct = 0
+    total = 0
+    criterion = nn.CrossEntropyLoss()
+    total_loss = 0.0
+    
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(Config.DEVICE), labels.to(Config.DEVICE)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            
+    acc = 100 * correct / total
+    avg_loss = total_loss / len(test_loader)
+    return acc, avg_loss
+
 # ==========================================
-# 5. 메인 실험 실행 (Experiment Execution)
+# 4. 메인 실험 실행 (Experiment Execution)
 # ==========================================
 if __name__ == "__main__":
     args = get_args()
@@ -332,8 +305,9 @@ if __name__ == "__main__":
 
     test_loader = DataLoader(test_data, batch_size=Config.BATCH_SIZE, shuffle=False)
     
+    
     # 2. 모델 초기화
-    global_model = get_model(args.model, args.pretrained, num_classes=10)
+    global_model = get_model(args.model, args.pretrained, num_classes=10, device=Config.DEVICE)
     
     # ====================================================
     # PHASE 1: Public Data Pre-training
