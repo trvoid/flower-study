@@ -4,6 +4,7 @@ import os
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 import copy
 import matplotlib.pyplot as plt
 import logging
@@ -30,6 +31,25 @@ class Config:
     # 학습 관련
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     BATCH_SIZE = 32
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Federated Learning Simulation (From Scratch)")
@@ -66,10 +86,13 @@ def get_args():
     #  - fl_rounds: 통신 라운드
     #  - local_epochs: 클라이언트 당 로컬 에폭
     #  - local_lr: 클라이언트 당 로컬 학습률
+    #  - mu: FedProx mu (proximal term coefficient)
+    #  - focal_gamma: Focal Loss gamma (0.0 means CrossEntropy)
     parser.add_argument('--fl_rounds', type=int, default=10, help='FL rounds')
     parser.add_argument('--local_epochs', type=int, default=2, help='Local epochs')
     parser.add_argument('--local_lr', type=float, default=0.01, help='Local learning rate')
     parser.add_argument('--mu', type=float, default=0.0, help='FedProx mu (proximal term coefficient)')
+    parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal Loss gamma (0.0 means CrossEntropy)')
     
     # Output Control
     parser.add_argument('--result_dir', type=str, default='./results', help='Directory to save all results (logs, plots, models)')
@@ -102,7 +125,7 @@ def train_centralized(model, dataset, epochs, lr, description="Training"):
         # print(f"Epoch {epoch+1}/{epochs} Loss: {running_loss/len(loader):.4f}") # tqdm이 대체함
     return model
  
-def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr, mu=0.0, img_size=32):
+def train_client_local(model_name, pretrained, global_weights, dataset, epochs, lr, mu=0.0, focal_gamma=0.0, img_size=32):
     """클라이언트 로컬 학습 (Federated Learning 용)"""
     # 글로벌 가중치 복사 및 로드
     model = get_model(model_name, pretrained, num_classes=10, img_size=img_size, device=Config.DEVICE)
@@ -118,7 +141,12 @@ def train_client_local(model_name, pretrained, global_weights, dataset, epochs, 
     
     loader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=True)
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9) # FL은 보통 SGD 사용
-    criterion = nn.CrossEntropyLoss()
+    
+    # Loss Function (FedFocal vs FedAvg/FedProx)
+    if focal_gamma > 0:
+        criterion = FocalLoss(gamma=focal_gamma)
+    else:
+        criterion = nn.CrossEntropyLoss()
     
     for epoch in range(epochs):
         for images, labels in loader:
@@ -229,6 +257,7 @@ def run_phase_2(args, global_model, client_datasets, test_loader, acc_pre, img_s
                 args.local_epochs, 
                 args.local_lr,
                 args.mu,
+                args.focal_gamma,
                 img_size
             )
             local_weights_list.append(w)
