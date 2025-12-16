@@ -95,7 +95,7 @@ def get_args():
     parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal Loss gamma (0.0 means CrossEntropy)')
     
     # Output Control
-    parser.add_argument('--result_dir', type=str, default='./results', help='Directory to save all results (logs, plots, models)')
+    parser.add_argument('--result_dir', type=str, default='./results_fedavg', help='Directory to save all results (logs, plots, models)')
 
     return parser.parse_args()
 

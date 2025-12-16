@@ -71,7 +71,7 @@ def get_args():
     parser.add_argument('--local_lr', type=float, default=0.01, help='Local learning rate')
     
     # Output Control
-    parser.add_argument('--result_dir', type=str, default='./results', help='Directory to save all results (logs, plots, models)')
+    parser.add_argument('--result_dir', type=str, default='./results_scaffold', help='Directory to save all results (logs, plots, models)')
 
     return parser.parse_args()
 
